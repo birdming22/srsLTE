@@ -246,6 +246,12 @@ int rf_uhd_open(char *args, void **h)
       args = "";
     }
     
+    // Check mulitple antennas
+    int n_channels = 1;
+    if (strstr(args, "port=2")) {
+        n_channels = 2;
+    }
+
     /* If device type or name not given in args, choose a B200 */
     if (args[0]=='\0') {
       // If B200 is available, use it
@@ -268,13 +274,13 @@ int rf_uhd_open(char *args, void **h)
     printf("Trying to dynamically change Master clock...\n");
     uhd_usrp_set_master_clock_rate(handler->usrp, cur_clock/2, 0);    
       
-    size_t channel = 0;
+    size_t channel[] = {0, 1};
     uhd_stream_args_t stream_args = {
           .cpu_format = "fc32",
           .otw_format = "sc16",
           .args = "",
-          .channel_list = &channel,
-          .n_channels = 1
+          .channel_list = channel,
+          .n_channels = n_channels
       };
       
     handler->has_rssi = get_has_rssi(handler);  
