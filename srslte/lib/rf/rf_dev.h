@@ -54,6 +54,9 @@ typedef struct {
   int    (*srslte_rf_send_timed)(void *h, void *data, int nsamples,
                      time_t secs, double frac_secs, bool has_time_spec,
                      bool blocking, bool is_start_of_burst, bool is_end_of_burst);
+  int    (*srslte_rf_send_timed_multi)(void *h, void **data, int nsamples,
+                     time_t secs, double frac_secs, bool has_time_spec,
+                     bool blocking, bool is_start_of_burst, bool is_end_of_burst);
   void   (*srslte_rf_set_tx_cal)(void *h, srslte_rf_cal_t *cal);
 
   void   (*srslte_rf_set_rx_cal)(void *h, srslte_rf_cal_t *cal);
@@ -90,6 +93,7 @@ static rf_dev_t dev_uhd = {
   rf_uhd_get_time,  
   rf_uhd_recv_with_time,
   rf_uhd_send_timed,
+  rf_uhd_send_timed_multi,
   rf_uhd_set_tx_cal,
   rf_uhd_set_rx_cal
 };
@@ -125,6 +129,7 @@ static rf_dev_t dev_blade = {
   rf_blade_get_time,  
   rf_blade_recv_with_time,
   rf_blade_send_timed,
+  NULL,
   rf_blade_set_tx_cal,
   rf_blade_set_rx_cal
 };

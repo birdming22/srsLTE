@@ -85,7 +85,8 @@ srslte_softbuffer_tx_t softbuffer;
 srslte_regs_t regs;
 srslte_ra_dl_dci_t ra_dl;  
 
-cf_t *sf_buffer = NULL, *output_buffer = NULL;
+cf_t *sf_buffer[SRSLTE_MAX_PORTS];
+cf_t *output_buffer[SRSLTE_MAX_PORTS];
 int sf_n_re, sf_n_samples;
 
 pthread_t net_thread; 
@@ -124,6 +125,11 @@ void parse_args(int argc, char **argv) {
     switch (opt) {
     case 'a':
       rf_args = argv[optind];
+      if (strstr(rf_args, "port=2")) {
+        cell.nof_ports = 2;
+      } else {
+        cell.nof_ports = 1;
+      }
       break;
     case 'g':
       rf_gain = atof(argv[optind]);
@@ -169,17 +175,22 @@ void parse_args(int argc, char **argv) {
 }
 
 void base_init() {
+  int i;
   
   /* init memory */
-  sf_buffer = srslte_vec_malloc(sizeof(cf_t) * sf_n_re);
-  if (!sf_buffer) {
-    perror("malloc");
-    exit(-1);
+  for (i = 0; i < cell.nof_ports; i++) {
+    sf_buffer[i] = srslte_vec_malloc(sizeof(cf_t) * sf_n_re);
+    if (!sf_buffer[i]) {
+      perror("malloc");
+      exit(-1);
+    }
   }
-  output_buffer = srslte_vec_malloc(sizeof(cf_t) * sf_n_samples);
-  if (!output_buffer) {
-    perror("malloc");
-    exit(-1);
+  for (i = 0; i < cell.nof_ports; i++) {
+    output_buffer[i] = srslte_vec_malloc(sizeof(cf_t) * sf_n_samples);
+    if (!output_buffer[i]) {
+      perror("malloc");
+      exit(-1);
+    }
   }
   /* open file or USRP */
   if (output_file_name) {
@@ -267,6 +278,7 @@ void base_init() {
 }
 
 void base_free() {
+  int i;
 
   srslte_softbuffer_tx_free(&softbuffer);
   srslte_pdsch_free(&pdsch);
@@ -276,11 +288,15 @@ void base_free() {
 
   srslte_ofdm_tx_free(&ifft);
 
-  if (sf_buffer) {
-    free(sf_buffer);
+  for (i = 0; i < cell.nof_ports; i++) {
+    if (sf_buffer[i]) {
+      free(sf_buffer[i]);
+    }
   }
-  if (output_buffer) {
-    free(output_buffer);
+  for (i = 0; i < cell.nof_ports; i++) {
+    if (output_buffer[i]) {
+      free(output_buffer[i]);
+    }
   }
   if (output_file_name) {
     if (!null_file_sink) {
@@ -498,8 +514,8 @@ int main(int argc, char **argv) {
   }
 
   for (i = 0; i < SRSLTE_MAX_PORTS; i++) { // now there's only 1 port
-    sf_symbols[i] = sf_buffer;
-    slot1_symbols[i] = &sf_buffer[SRSLTE_SLOT_LEN_RE(cell.nof_prb, cell.cp)];
+    sf_symbols[i] = sf_buffer[i];
+    slot1_symbols[i] = &sf_buffer[i][SRSLTE_SLOT_LEN_RE(cell.nof_prb, cell.cp)];
   }
 
 #ifndef DISABLE_RF
@@ -564,15 +580,21 @@ int main(int argc, char **argv) {
   
   while ((nf < nof_frames || nof_frames == -1) && !go_exit) {
     for (sf_idx = 0; sf_idx < SRSLTE_NSUBFRAMES_X_FRAME && (nf < nof_frames || nof_frames == -1); sf_idx++) {
-      bzero(sf_buffer, sizeof(cf_t) * sf_n_re);
-
-      if (sf_idx == 0 || sf_idx == 5) {
-        srslte_pss_put_slot(pss_signal, sf_buffer, cell.nof_prb, SRSLTE_CP_NORM);
-        srslte_sss_put_slot(sf_idx ? sss_signal5 : sss_signal0, sf_buffer, cell.nof_prb,
-            SRSLTE_CP_NORM);
+      for (i = 0; i < cell.nof_ports; i++) {
+        bzero(sf_buffer[i], sizeof(cf_t) * sf_n_re);
       }
 
-      srslte_refsignal_cs_put_sf(cell, 0, est.csr_signal.pilots[0][sf_idx], sf_buffer);
+      if (sf_idx == 0 || sf_idx == 5) {
+        for (i = 0; i < cell.nof_ports; i++) {
+          srslte_pss_put_slot(pss_signal, sf_buffer[i], cell.nof_prb, SRSLTE_CP_NORM);
+          srslte_sss_put_slot(sf_idx ? sss_signal5 : sss_signal0, sf_buffer[i], cell.nof_prb,
+              SRSLTE_CP_NORM);
+        }
+      }
+
+      for (i = 0; i < cell.nof_ports; i++) {
+        srslte_refsignal_cs_put_sf(cell, i, est.csr_signal.pilots[0][sf_idx], sf_buffer[i]);
+      }
 
       srslte_pbch_mib_pack(&cell, sfn, bch_payload);
       if (sf_idx == 0) {
@@ -641,20 +663,25 @@ int main(int argc, char **argv) {
       }
       
       /* Transform to OFDM symbols */
-      srslte_ofdm_tx_sf(&ifft, sf_buffer, output_buffer);
+      for (i = 0; i < cell.nof_ports; i++) {
+        srslte_ofdm_tx_sf(&ifft, sf_buffer[i], output_buffer[i]);
+      }
       
       /* send to file or usrp */
       if (output_file_name) {
         if (!null_file_sink) {
-          srslte_filesink_write(&fsink, output_buffer, sf_n_samples);          
+          srslte_filesink_write(&fsink, output_buffer[0], sf_n_samples);
         }
         usleep(1000);
       } else {
 #ifndef DISABLE_RF
         // FIXME
         float norm_factor = (float) cell.nof_prb/15/sqrtf(pdsch_cfg.grant.nof_prb);
-        srslte_vec_sc_prod_cfc(output_buffer, rf_amp*norm_factor, output_buffer, SRSLTE_SF_LEN_PRB(cell.nof_prb));
-        srslte_rf_send2(&rf, output_buffer, sf_n_samples, true, start_of_burst, false);
+        for (i = 0; i < cell.nof_ports; i++) {
+          srslte_vec_sc_prod_cfc(output_buffer[i], rf_amp*norm_factor, output_buffer[i], SRSLTE_SF_LEN_PRB(cell.nof_prb));
+        }
+        srslte_rf_send2_multi(&rf, (void **)output_buffer, sf_n_samples, true, start_of_burst, false);
+        //srslte_rf_send2(&rf, output_buffer[0], sf_n_samples, true, start_of_burst, false);
         start_of_burst=false; 
 #endif
       }

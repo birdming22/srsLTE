@@ -241,6 +241,8 @@ int rf_uhd_open(char *args, void **h)
     uhd_string_vector_make(&devices_str);
     uhd_usrp_find("", &devices_str);
     
+    handler->dynamic_rate = true;
+
     // Allow NULL parameter
     if (args == NULL) {
       args = "";
@@ -348,7 +350,7 @@ int rf_uhd_close(void *h)
 void rf_uhd_set_master_clock_rate(void *h, double rate) {
   rf_uhd_handler_t *handler = (rf_uhd_handler_t*) h;
   if (handler->dynamic_rate) {
-    uhd_usrp_set_master_clock_rate(handler->usrp, rate, 0);
+    uhd_usrp_set_master_clock_rate(handler->usrp, rate, ~0);
   }
 }
 
@@ -360,7 +362,7 @@ bool rf_uhd_is_master_clock_dynamic(void *h) {
 double rf_uhd_set_rx_srate(void *h, double freq)
 {
   rf_uhd_handler_t *handler = (rf_uhd_handler_t*) h;
-  uhd_usrp_set_rx_rate(handler->usrp, freq, 0);
+  uhd_usrp_set_rx_rate(handler->usrp, freq, ~0);
   uhd_usrp_get_rx_rate(handler->usrp, 0, &freq);
   return freq; 
 }
@@ -368,7 +370,7 @@ double rf_uhd_set_rx_srate(void *h, double freq)
 double rf_uhd_set_tx_srate(void *h, double freq)
 {
   rf_uhd_handler_t *handler = (rf_uhd_handler_t*) h;
-  uhd_usrp_set_tx_rate(handler->usrp, freq, 0);
+  uhd_usrp_set_tx_rate(handler->usrp, freq, ~0);
   uhd_usrp_get_tx_rate(handler->usrp, 0, &freq);
   handler->tx_rate = freq;
   return freq; 
@@ -379,6 +381,12 @@ double rf_uhd_set_rx_gain(void *h, double gain)
   rf_uhd_handler_t *handler = (rf_uhd_handler_t*) h;
   uhd_usrp_set_rx_gain(handler->usrp, gain, 0, "");
   uhd_usrp_get_rx_gain(handler->usrp, 0, "", &gain);
+  size_t channels;
+  uhd_usrp_get_tx_num_channels(handler->usrp, &channels);
+  if (channels == 2) {
+    uhd_usrp_set_rx_gain(handler->usrp, gain, 1, "");
+    uhd_usrp_get_rx_gain(handler->usrp, 1, "", &gain);
+  }
   return gain;
 }
 
@@ -387,6 +395,12 @@ double rf_uhd_set_tx_gain(void *h, double gain)
   rf_uhd_handler_t *handler = (rf_uhd_handler_t*) h;
   uhd_usrp_set_tx_gain(handler->usrp, gain, 0, "");
   uhd_usrp_get_tx_gain(handler->usrp, 0, "", &gain);
+  size_t channels;
+  uhd_usrp_get_tx_num_channels(handler->usrp, &channels);
+  if (channels == 2) {
+    uhd_usrp_set_tx_gain(handler->usrp, gain, 1, "");
+    uhd_usrp_get_tx_gain(handler->usrp, 1, "", &gain);
+  }
   return gain;
 }
 
@@ -417,6 +431,12 @@ double rf_uhd_set_rx_freq(void *h, double freq)
   rf_uhd_handler_t *handler = (rf_uhd_handler_t*) h;
   uhd_usrp_set_rx_freq(handler->usrp, &tune_request, 0, &tune_result);
   uhd_usrp_get_rx_freq(handler->usrp, 0, &freq);
+  size_t channels;
+  uhd_usrp_get_tx_num_channels(handler->usrp, &channels);
+  if (channels == 2) {
+    uhd_usrp_set_rx_freq(handler->usrp, &tune_request, 1, &tune_result);
+    uhd_usrp_get_rx_freq(handler->usrp, 1, &freq);
+  }
   return freq;
 }
 
@@ -431,6 +451,12 @@ double rf_uhd_set_tx_freq(void *h, double freq)
   rf_uhd_handler_t *handler = (rf_uhd_handler_t*) h;
   uhd_usrp_set_tx_freq(handler->usrp, &tune_request, 0, &tune_result);
   uhd_usrp_get_tx_freq(handler->usrp, 0, &freq);
+  size_t channels;
+  uhd_usrp_get_tx_num_channels(handler->usrp, &channels);
+  if (channels == 2) {
+    uhd_usrp_set_tx_freq(handler->usrp, &tune_request, 1, &tune_result);
+    uhd_usrp_get_tx_freq(handler->usrp, 1, &freq);
+  }
   return freq;
 }
 
@@ -539,6 +565,70 @@ int rf_uhd_send_timed(void *h,
     return nsamples;
   } else {
     const void **buffs_ptr = (const void**) &data;
+    uhd_tx_metadata_set_start(&handler->tx_md, is_start_of_burst);
+    uhd_tx_metadata_set_end(&handler->tx_md, is_end_of_burst);
+    return uhd_tx_streamer_send(handler->tx_stream, buffs_ptr, nsamples, &handler->tx_md, 0.0, &txd_samples);
+  }
+}
+
+int rf_uhd_send_timed_multi(void *h,
+                     void **data,
+                     int nsamples,
+                     time_t secs,
+                     double frac_secs,                      
+                     bool has_time_spec,
+                     bool blocking,
+                     bool is_start_of_burst,
+                     bool is_end_of_burst) 
+{
+  rf_uhd_handler_t* handler = (rf_uhd_handler_t*) h;
+  
+  size_t txd_samples;
+  if (has_time_spec) {
+    uhd_tx_metadata_set_time_spec(&handler->tx_md, secs, frac_secs);
+  }
+  int trials = 0; 
+  if (blocking) {
+    int n = 0;
+    cf_t *data_c[2];
+    data_c[0] = (cf_t*) data[0];
+    data_c[1] = (cf_t*) data[1];
+    do {
+      size_t tx_samples = handler->tx_nof_samples;
+      
+      // First packet is start of burst if so defined, others are never 
+      if (n == 0) {
+        uhd_tx_metadata_set_start(&handler->tx_md, is_start_of_burst);
+      } else {
+        uhd_tx_metadata_set_start(&handler->tx_md, false);
+      }
+      
+      // middle packets are never end of burst, last one as defined
+      if (nsamples - n > tx_samples) {
+        uhd_tx_metadata_set_end(&handler->tx_md, false);
+      } else {
+        tx_samples = nsamples - n; 
+        uhd_tx_metadata_set_end(&handler->tx_md, is_end_of_burst);
+      }
+      
+      void *buff[2];
+      buff[0] = (void*) &data_c[0][n];
+      buff[1] = (void*) &data_c[1][n];
+      const void **buffs_ptr = (const void**) buff;
+      uhd_error error = uhd_tx_streamer_send(handler->tx_stream, buffs_ptr, 
+                                             tx_samples, &handler->tx_md, 3.0, &txd_samples);
+      if (error) {
+        fprintf(stderr, "Error sending to UHD: %d\n", error);
+        return -1; 
+      }
+      // Increase time spec 
+      uhd_tx_metadata_add_time_spec(&handler->tx_md, txd_samples/handler->tx_rate);
+      n += txd_samples;
+      trials++;
+    } while (n < nsamples && trials < 100);
+    return nsamples;
+  } else {
+    const void **buffs_ptr = (const void**) data;
     uhd_tx_metadata_set_start(&handler->tx_md, is_start_of_burst);
     uhd_tx_metadata_set_end(&handler->tx_md, is_end_of_burst);
     return uhd_tx_streamer_send(handler->tx_stream, buffs_ptr, nsamples, &handler->tx_md, 0.0, &txd_samples);

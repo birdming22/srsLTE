@@ -106,3 +106,13 @@ SRSLTE_API int  rf_uhd_send_timed(void *h,
                                   bool is_start_of_burst, 
                                   bool is_end_of_burst);
 
+SRSLTE_API int  rf_uhd_send_timed_multi(void *h,
+                                  void **data,
+                                  int nsamples,
+                                  time_t secs,
+                                  double frac_secs,
+                                  bool has_time_spec,
+                                  bool blocking,
+                                  bool is_start_of_burst,
+                                  bool is_end_of_burst);
+

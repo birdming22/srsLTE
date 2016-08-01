@@ -277,6 +277,21 @@ int srslte_rf_send_timed3(srslte_rf_t *rf,
                                  has_time_spec, blocking, is_start_of_burst, is_end_of_burst);  
 }
 
+int srslte_rf_send_timed3_multi(srslte_rf_t *rf,
+                     void **data,
+                     int nsamples,
+                     time_t secs,
+                     double frac_secs,
+                     bool has_time_spec,
+                     bool blocking,
+                     bool is_start_of_burst,
+                     bool is_end_of_burst) 
+{
+
+  return ((rf_dev_t*) rf->dev)->srslte_rf_send_timed_multi(rf->handler, data, nsamples, secs, frac_secs, 
+                                 has_time_spec, blocking, is_start_of_burst, is_end_of_burst);  
+}
+
 int srslte_rf_send(srslte_rf_t *rf, void *data, uint32_t nsamples, bool blocking)
 {
   return srslte_rf_send2(rf, data, nsamples, blocking, true, true); 
@@ -285,6 +300,11 @@ int srslte_rf_send(srslte_rf_t *rf, void *data, uint32_t nsamples, bool blocking
 int srslte_rf_send2(srslte_rf_t *rf, void *data, uint32_t nsamples, bool blocking, bool start_of_burst, bool end_of_burst)
 {
   return srslte_rf_send_timed3(rf, data, nsamples, 0, 0, false, blocking, start_of_burst, end_of_burst);
+}
+
+int srslte_rf_send2_multi(srslte_rf_t *rf, void **data, uint32_t nsamples, bool blocking, bool start_of_burst, bool end_of_burst)
+{
+  return srslte_rf_send_timed3_multi(rf, data, nsamples, 0, 0, false, blocking, start_of_burst, end_of_burst);
 }
 
 

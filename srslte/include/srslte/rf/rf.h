@@ -164,6 +164,13 @@ SRSLTE_API int srslte_rf_send2(srslte_rf_t *h,
                         bool start_of_burst, 
                         bool end_of_burst); 
 
+SRSLTE_API int srslte_rf_send2_multi(srslte_rf_t *h,
+                        void **data,
+                        uint32_t nsamples,
+                        bool blocking,
+                        bool start_of_burst,
+                        bool end_of_burst);
+
 SRSLTE_API int srslte_rf_send(srslte_rf_t *h, 
                        void *data, 
                        uint32_t nsamples, 
